@@ -1,0 +1,22 @@
+[Unit]
+Description=Whisper API Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/whisper-api
+Environment=PATH=/opt/ai-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=WHISPER_MODEL=base
+# Secret WHISPER_API_KEY lives in /opt/whisper-api/.env (git-ignored); the leading
+# dash makes the file optional so the unit still starts if it is absent.
+EnvironmentFile=-/opt/whisper-api/.env
+ExecStart=/opt/ai-env/bin/python /opt/whisper-api/whisper-api.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
