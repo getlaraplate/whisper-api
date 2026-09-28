@@ -13,7 +13,7 @@ MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base")
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
 API_KEY = os.environ.get("WHISPER_API_KEY", "")
-PORT = int(os.environ.get("WHISPER_PORT", "9000"))
+PORT = int(os.environ.get("WHISPER_PORT", "8001"))
 
 # Loaded once at startup; cached on disk after the first download.
 model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)

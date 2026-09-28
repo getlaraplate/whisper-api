@@ -12,7 +12,7 @@ Python environment. Built on [faster-whisper](https://github.com/SYSTRAN/faster-
 - `POST /transcribe` (multipart `file`, optional `?language=it`; `Authorization: Bearer <WHISPER_API_KEY>` when a key is set) -> `{"text","language","duration"}`
 
 ```bash
-curl -s -H "Authorization: Bearer $KEY" -F file=@sample.mp3 http://localhost:9000/transcribe
+curl -s -H "Authorization: Bearer $KEY" -F file=@sample.mp3 http://localhost:8001/transcribe
 ```
 
 ## Install (Debian LXC, no Docker)
@@ -34,9 +34,9 @@ systemctl daemon-reload && systemctl enable --now whisper
 | `WHISPER_DEVICE` | `cpu` | `cuda` for GPU. |
 | `WHISPER_COMPUTE_TYPE` | `int8` | GPU: `float16`. |
 | `WHISPER_API_KEY` | *(empty)* | Bearer token; empty = open (dev only). Kept in `.env`, never committed. |
-| `WHISPER_PORT` | `9000` | 8000 is the embedding service. |
+| `WHISPER_PORT` | `8001` | 8000 is the embedding service. |
 
 ## Wire into Laraplate
 
-`laraplate/.env`: `WHISPER_URL=http://<host>:9000`, `WHISPER_API_KEY=<key>`,
+`laraplate/.env`: `WHISPER_URL=http://<host>:8001`, `WHISPER_API_KEY=<key>`,
 `AI_MEDIA_TRANSCRIPTION_MODEL=whisper-local`.
