@@ -5,16 +5,28 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=root
+# Dedicated unprivileged user, see "Install" in the README.
+User=whisper-api
+Group=whisper-api
 WorkingDirectory=/opt/whisper-api
 Environment=PATH=/opt/ai-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=WHISPER_MODEL=base
+# Hugging Face model cache, in /var/cache/whisper-api (created by systemd, owned by the user).
+CacheDirectory=whisper-api
+Environment=HF_HOME=/var/cache/whisper-api
 # Secret WHISPER_API_KEY lives in /opt/whisper-api/.env (git-ignored); the leading
-# dash makes the file optional so the unit still starts if it is absent.
+# dash makes the file optional so the unit still starts if it is absent. systemd
+# reads it as root, so it can stay root-only (chmod 600).
 EnvironmentFile=-/opt/whisper-api/.env
-ExecStart=/opt/ai-env/bin/python /opt/whisper-api/whisper-api.py
+ExecStart=/opt/ai-env/bin/gunicorn -c /opt/whisper-api/gunicorn.conf.py whisper-api:app
 Restart=always
 RestartSec=10
+NoNewPrivileges=yes
+# Extra sandboxing; needs mount namespaces, which an unprivileged LXC container
+# may not allow (the unit then fails with status 226/NAMESPACE).
+#PrivateTmp=yes
+#ProtectSystem=strict
+#ProtectHome=yes
 StandardOutput=journal
 StandardError=journal
 

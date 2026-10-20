@@ -2,28 +2,102 @@
 
 Self-hosted speech-to-text for Laraplate media analysis, on the shared `ai` host.
 Mirrors [`sentence-transformers-api`](https://github.com/getlaraplate/sentence-transformers-api):
-a small Flask service under `/opt`, run by systemd, using the shared `/opt/ai-env`
-Python environment. Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-(CTranslate2). CPU by default; GPU optional.
+a small Flask service under `/opt`, served by gunicorn under systemd, using the
+shared `/opt/ai-env` Python environment. Built on
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2). CPU by
+default; GPU optional.
 
 ## Endpoints
 
-- `GET /health` -> `{"status":"healthy","model":"base","device":"cpu"}`
-- `POST /transcribe` (multipart `file`, optional `?language=it`; `Authorization: Bearer <WHISPER_API_KEY>` when a key is set) -> `{"text","language","duration"}`
+- `GET /health` -> `{"status":"healthy","model":"base","device":"cpu"}`. Always open.
+- `POST /transcribe` (multipart `file`, optional `language`, as `?language=it` or a
+  form field; `Authorization: Bearer <WHISPER_API_KEY>` when a key is set) ->
+  `{"text","language","duration"}`
 
 ```bash
 curl -s -H "Authorization: Bearer $KEY" -F file=@sample.mp3 http://localhost:8001/transcribe
 ```
 
+Errors on `/transcribe`: `400` without a `file` or with a `language` that is not
+an ISO 639 code (`it`, `en`, `haw`), `401` without a valid key, `413` for a file
+over `WHISPER_MAX_UPLOAD_MB`. The Laraplate client treats any error as "no
+transcript" and indexes the media without one.
+
+## Security
+
+- **Authentication.** When `WHISPER_API_KEY` is set, `/transcribe` requires
+  `Authorization: Bearer <key>`, the header the Laraplate client sends with its
+  `WHISPER_API_KEY`. Several keys may be given, comma-separated, to rotate one.
+  The key is checked before the upload is read. Without a key the service is
+  open: run it like that only on a trusted network.
+- **Model.** The model is fixed by `WHISPER_MODEL` on the host; a request cannot
+  name one, so it cannot make the service download anything.
+- **Upload limit.** Files larger than `WHISPER_MAX_UPLOAD_MB` answer `413`. The
+  upload is spooled to the temporary directory and copied once more for the
+  decoder, so keep about twice that size free in `/tmp`.
+- **Process.** The systemd unit runs gunicorn as the unprivileged `whisper-api`
+  user.
+- **Transport.** The service speaks plain HTTP. Outside a private network, put
+  it behind a TLS-terminating reverse proxy, or bind it to `127.0.0.1` with
+  `WHISPER_HOST`.
+
+## Concurrency
+
+Transcription is synchronous: the request stays open until the text is ready,
+and there is no job queue. gunicorn runs **one worker process with 4 threads**
+([`gunicorn.conf.py`](gunicorn.conf.py)), because every process would load its
+own copy of the model:
+
+- At most `WHISPER_NUM_WORKERS` transcriptions run at the same time (default 1);
+  the other uploads wait in their thread.
+- `/health` keeps answering while a transcription runs.
+- Each waiting upload holds a thread, so the 4 threads also cap how many
+  requests can be in flight. Raise them with `GUNICORN_CMD_ARGS="--threads 8"`.
+- A waiting request counts against the client's timeout (`WHISPER_TIMEOUT` on the
+  Laraplate side, default 120 s). On CPU, keep `WHISPER_NUM_WORKERS` at 1 and
+  raise the client timeout for long media rather than running transcriptions in
+  parallel, which would share the same cores. With a GPU or many cores,
+  `WHISPER_NUM_WORKERS=2` lets two transcriptions run in parallel (memory grows
+  accordingly).
+
 ## Install (Debian LXC, no Docker)
+
+Create the dedicated user once (no home, no login shell), then install the code
+owned by root so the service can read but not modify it:
 
 ```bash
 apt install -y ffmpeg                       # required to decode audio/video
+useradd --system --user-group --no-create-home --shell /usr/sbin/nologin whisper-api
 git clone git@github.com:getlaraplate/whisper-api.git /opt/whisper-api
 /opt/ai-env/bin/pip install -r /opt/whisper-api/requirements.txt
 printf 'WHISPER_API_KEY=%s\n' "$(openssl rand -hex 24)" > /opt/whisper-api/.env
+chmod 600 /opt/whisper-api/.env             # systemd reads it as root
 cp /opt/whisper-api/whisper.service /etc/systemd/system/whisper.service
 systemctl daemon-reload && systemctl enable --now whisper
+```
+
+The model is cached in `/var/cache/whisper-api` (`HF_HOME`), which systemd
+creates and hands to `whisper-api`.
+
+Upgrading from a unit that ran as `root`: the model cached in
+`/root/.cache/huggingface` is not visible to the new user and is downloaded
+again on the first start. To skip the download, copy it before starting:
+
+```bash
+mkdir -p /var/cache/whisper-api
+cp -a /root/.cache/huggingface/. /var/cache/whisper-api/
+chown -R whisper-api:whisper-api /var/cache/whisper-api
+```
+
+The commented `PrivateTmp`, `ProtectSystem` and `ProtectHome` lines in the unit
+add sandboxing where mount namespaces are available (not in every unprivileged
+LXC container).
+
+## Running locally
+
+```bash
+python whisper-api.py                          # Flask development server
+gunicorn -c gunicorn.conf.py whisper-api:app   # production server
 ```
 
 ## Config (env, via systemd unit or /opt/whisper-api/.env)
@@ -33,8 +107,22 @@ systemctl daemon-reload && systemctl enable --now whisper
 | `WHISPER_MODEL` | `base` | `tiny`/`base`/`small`/`medium`/`large-v3`. Keep to `base`/`small` on a 4 GB CPU container. |
 | `WHISPER_DEVICE` | `cpu` | `cuda` for GPU. |
 | `WHISPER_COMPUTE_TYPE` | `int8` | GPU: `float16`. |
-| `WHISPER_API_KEY` | *(empty)* | Bearer token; empty = open (dev only). Kept in `.env`, never committed. |
+| `WHISPER_NUM_WORKERS` | `1` | Transcriptions that may run at the same time (see [Concurrency](#concurrency)). |
+| `WHISPER_API_KEY` | *(empty)* | Bearer token; several comma-separated keys are accepted. Empty = open (trusted network only). Kept in `.env`, never committed. |
+| `WHISPER_MAX_UPLOAD_MB` | `512` | Largest accepted upload, in MB; `413` beyond. |
+| `WHISPER_HOST` | `0.0.0.0` | Listening address. |
 | `WHISPER_PORT` | `8001` | 8000 is the embedding service. |
+| `GUNICORN_CMD_ARGS` | *(empty)* | Overrides [`gunicorn.conf.py`](gunicorn.conf.py), e.g. `--threads 8`. |
+
+## Tests
+
+```bash
+pip install flask
+python -m unittest discover -s tests
+```
+
+The tests replace `faster-whisper` with a fake: they download no model and check
+what the service asks of the model and what it answers.
 
 ## Wire into Laraplate
 
