@@ -40,3 +40,7 @@ systemctl daemon-reload && systemctl enable --now whisper
 
 `laraplate/.env`: `WHISPER_URL=http://<host>:8001`, `WHISPER_API_KEY=<key>`,
 `AI_MEDIA_TRANSCRIPTION_MODEL=whisper-local`.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
