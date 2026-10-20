@@ -12,7 +12,9 @@ default; GPU optional.
 **Status: experimental.** Fine for development, tests and evaluation on a
 trusted network. Not ready for production yet: the gaps below are open, and the
 status changes to `production` only when all of them are closed. `GET /health`
-reports the same status in `readiness`.
+reports the same status in `readiness`. The work that closes them, and what
+`production` requires, is in
+[the production readiness spec](docs/superpowers/specs/2026-10-20-production-readiness-design.md).
 
 **Tested on:** unit tests with a fake model (no model download), run by hand.
 Earlier releases ran on the Laraplate test container (Debian LXC, 4 GB RAM,
