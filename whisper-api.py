@@ -30,6 +30,10 @@ API_KEYS = env_list("WHISPER_API_KEY")
 HOST = os.environ.get("WHISPER_HOST", "0.0.0.0")
 PORT = int(os.environ.get("WHISPER_PORT", "8001"))
 
+# Production readiness of this release, reported by /health and stated in the
+# README: "experimental" until every requirement for production is met.
+READINESS = "experimental"
+
 # Media files are large; the server spools the body to disk, not to memory.
 MAX_UPLOAD_MB = max(1, int(os.environ.get("WHISPER_MAX_UPLOAD_MB", "512")))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -61,7 +65,7 @@ def request_too_large(error):
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "healthy", "model": MODEL_SIZE, "device": DEVICE})
+    return jsonify({"status": "healthy", "readiness": READINESS, "model": MODEL_SIZE, "device": DEVICE})
 
 
 @app.route("/transcribe", methods=["POST"])

@@ -7,9 +7,43 @@ shared `/opt/ai-env` Python environment. Built on
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2). CPU by
 default; GPU optional.
 
+## Production readiness
+
+**Status: experimental.** Fine for development, tests and evaluation on a
+trusted network. Not ready for production yet: the gaps below are open, and the
+status changes to `production` only when all of them are closed. `GET /health`
+reports the same status in `readiness`.
+
+**Tested on:** unit tests with a fake model (no model download), run by hand.
+Earlier releases ran on the Laraplate test container (Debian LXC, 4 GB RAM,
+2 vCPU, CPU only, model `base`); the hardened release (gunicorn, unprivileged
+user, upload limit) has not been verified there yet. **GPU:** not tested.
+
+**Known gaps:**
+
+- The documented install shares one virtualenv (`/opt/ai-env`) with
+  `sentence-transformers-api`: upgrading one service can break the other.
+- No container image, no tagged release, no changelog.
+- The model loads at startup with no separate readiness check: a process still
+  loading looks alive to a load balancer or a healthcheck.
+- Transcription is synchronous and runs one file at a time by default (see
+  [Concurrency](#concurrency)): long media can exceed the client's timeout.
+- No backpressure and no maximum media duration: uploads wait without limit
+  when every thread is busy.
+- No metrics and no request id in the logs.
+- No continuous integration: the tests run only by hand.
+- No machine-readable API description and no service version in `/health`.
+- `faster-whisper` is held at `1.0.*`, behind its latest release.
+- Plain HTTP: TLS needs your own reverse proxy (see [Security](#security)).
+
+**Default model:** Whisper `base`, converted for CTranslate2 as
+[`Systran/faster-whisper-base`](https://huggingface.co/Systran/faster-whisper-base),
+licence MIT (model card). Another `WHISPER_MODEL` brings the licence on its own
+model card.
+
 ## Endpoints
 
-- `GET /health` -> `{"status":"healthy","model":"base","device":"cpu"}`. Always open.
+- `GET /health` -> `{"status":"healthy","readiness":"experimental","model":"base","device":"cpu"}`. Always open.
 - `POST /transcribe` (multipart `file`, optional `language`, as `?language=it` or a
   form field; `Authorization: Bearer <WHISPER_API_KEY>` when a key is set) ->
   `{"text","language","duration"}`
