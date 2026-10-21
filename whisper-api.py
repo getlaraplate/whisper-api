@@ -49,6 +49,11 @@ PORT = int(os.environ.get("WHISPER_PORT", "8001"))
 # Production readiness of this release, reported by /health and stated in the
 # README: "experimental" until every requirement for production is met.
 READINESS = "experimental"
+# The release, from the VERSION file next to this one, and the version of the HTTP
+# contract described in openapi.json; a change that breaks a client raises it.
+VERSION_FILE = Path(__file__).with_name("VERSION")
+VERSION = VERSION_FILE.read_text().strip() if VERSION_FILE.is_file() else "unknown"
+API_VERSION = 1
 
 # Media files are large; the server spools the body to disk, not to memory.
 MAX_UPLOAD_MB = max(1, int(os.environ.get("WHISPER_MAX_UPLOAD_MB", "512")))
@@ -181,6 +186,8 @@ def health():
     return jsonify({
         "status": "healthy",
         "readiness": READINESS,
+        "version": VERSION,
+        "api_version": API_VERSION,
         "model": MODEL_SIZE,
         "model_revision": model_revision,
         "device": DEVICE,

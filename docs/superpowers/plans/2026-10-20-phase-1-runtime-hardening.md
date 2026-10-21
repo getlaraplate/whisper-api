@@ -89,9 +89,9 @@ created_on: 2026-10-20
 
 **Files:** create `VERSION`, `openapi.json`, `tests/test_contract.py`; modify `whisper-api.py`.
 
-- [ ] **Failing tests.** `/health` carries `version` from `VERSION` and `api_version` `1`; the routes of the app and the paths of `openapi.json` match; the answers of the test client in the success and documented error cases carry the required fields, with the documented types, of their schema.
-- [ ] **Implement** P9 and P10: `/health`, `/ready`, `/transcribe` (multipart `file`, `language` in query or form), the Bearer scheme, the error answers (`400`, `401`, `413`, `500`, `503`) and `X-Request-Id`.
-- [ ] **Run** the suite; commit `feat: declare the version and the HTTP contract`.
+- [x] **Failing tests.** `/health` carries `version` from `VERSION` and `api_version` `1`; the routes of the app and the paths of `openapi.json` match; the answers of the test client in the success and documented error cases carry the required fields, with the documented types, of their schema.
+- [x] **Implement** P9 and P10: `/health`, `/ready`, `/transcribe` (multipart `file`, `language` in query or form), the Bearer scheme, the error answers (`400`, `401`, `413`, `500`, `503`) and `X-Request-Id`.
+- [x] **Run** the suite; commit `feat: declare the version and the HTTP contract`.
 
 ### Task 6: Documentation and closing
 

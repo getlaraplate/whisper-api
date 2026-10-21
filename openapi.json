@@ -1,0 +1,382 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "whisper-api",
+    "version": "0.1.0",
+    "summary": "Speech-to-text for Laraplate media analysis (faster-whisper).",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "x-api-version": 1
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness and service state. Always open.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process runs.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "example": {
+                  "status": "healthy",
+                  "readiness": "experimental",
+                  "version": "0.1.0",
+                  "api_version": 1,
+                  "model": "base",
+                  "model_revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+                  "device": "cpu"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "summary": "Readiness: 200 once the model is loaded. Always open.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ready.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                },
+                "example": {
+                  "status": "ready"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Still loading the model.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Readiness"
+                },
+                "example": {
+                  "status": "loading"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transcribe": {
+      "post": {
+        "summary": "Transcribe one audio or video file, synchronously.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "description": "ISO 639 code of the spoken language; detected when omitted. May also be sent as a form field.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z]{2,3}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The media file; the field name must be file."
+                  },
+                  "language": {
+                    "type": "string",
+                    "pattern": "^[a-z]{2,3}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The transcript.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcription"
+                },
+                "example": {
+                  "text": "Buongiorno a tutti.",
+                  "language": "it",
+                  "duration": 12.3
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No file, a language that is not an ISO 639 code, or a file that is not readable media.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "unreadable media"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong Bearer key (only when the service has one).",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "unauthorized"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File over WHISPER_MAX_UPLOAD_MB, or media longer than WHISPER_MAX_DURATION_SECONDS.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "media too long (max 10800 s)"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected error. The details are in the service log under the request id.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalError"
+                },
+                "example": {
+                  "error": "internal error",
+                  "request_id": "5f2b9c0e8d4a4f1b9a7e3c6d2b1a0f9e"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Loading the model, or busy (WHISPER_MAX_IN_FLIGHT reached).",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/RetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "busy"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "WHISPER_API_KEY; not required when the service has no key."
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "The client's X-Request-Id when it matches [A-Za-z0-9._-]{1,128}, otherwise a new 32-hex id.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "InternalError": {
+        "type": "object",
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "internal error"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "Readiness": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "loading"
+            ]
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status",
+          "readiness",
+          "version",
+          "api_version",
+          "model",
+          "model_revision",
+          "device"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "healthy"
+          },
+          "readiness": {
+            "type": "string",
+            "enum": [
+              "experimental",
+              "production"
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "api_version": {
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "model_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device": {
+            "type": "string"
+          }
+        }
+      },
+      "Transcription": {
+        "type": "object",
+        "required": [
+          "text",
+          "language",
+          "duration"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

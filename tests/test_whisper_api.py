@@ -85,7 +85,15 @@ class WhisperApiTest(ServiceTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.get_json(),
-            {"status": "healthy", "readiness": "experimental", "model": "small", "model_revision": "abc123", "device": "cpu"},
+            {
+                "status": "healthy",
+                "readiness": "experimental",
+                "version": "0.1.0",
+                "api_version": 1,
+                "model": "small",
+                "model_revision": "abc123",
+                "device": "cpu",
+            },
         )
 
     def test_an_upload_larger_than_the_limit_answers_413_in_json(self):
