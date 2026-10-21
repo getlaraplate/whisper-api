@@ -6,6 +6,7 @@ import tempfile
 import threading
 from pathlib import Path
 
+import av
 from faster_whisper import WhisperModel
 from faster_whisper.utils import download_model
 from flask import Flask, jsonify, request
@@ -50,6 +51,14 @@ READINESS = "experimental"
 # Media files are large; the server spools the body to disk, not to memory.
 MAX_UPLOAD_MB = max(1, int(os.environ.get("WHISPER_MAX_UPLOAD_MB", "512")))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+# Longest media accepted, read from the container header before transcription.
+MAX_DURATION_SECONDS = max(1, int(os.environ.get("WHISPER_MAX_DURATION_SECONDS", "10800")))
+
+# Uploads being transcribed or waiting for the model. One more is refused with
+# 503 at once, before its body is read: below gunicorn's thread count, so
+# /health, /ready and the refusals always find a thread (gunicorn.conf.py).
+MAX_IN_FLIGHT = max(1, int(os.environ.get("WHISPER_MAX_IN_FLIGHT", "4")))
+_in_flight = threading.BoundedSemaphore(MAX_IN_FLIGHT)
 
 # An ISO 639 code such as "it" or "haw"; anything else would fail inside the model.
 LANGUAGE_PATTERN = re.compile(r"^[a-z]{2,3}$")
@@ -118,6 +127,17 @@ def authorized():
     return any(hmac.compare_digest(token.encode(), key.encode()) for key in API_KEYS)
 
 
+def media_duration(path):
+    """Seconds the media lasts according to its container, or None when it declares none.
+
+    Raises av.error.FFmpegError when the file is not a media file PyAV can open.
+    """
+    with av.open(path) as container:
+        if container.duration is None:
+            return None
+        return container.duration / av.time_base
+
+
 @app.errorhandler(413)
 def request_too_large(error):
     return jsonify({"error": f"file too large (max {MAX_UPLOAD_MB} MB)"}), 413
@@ -149,7 +169,16 @@ def transcribe():
         return jsonify({"error": "unauthorized"}), 401, {"WWW-Authenticate": "Bearer"}
     if not ready.is_set():
         return jsonify({"error": "loading model"}), 503, {"Retry-After": "10"}
+    if not _in_flight.acquire(blocking=False):
+        return jsonify({"error": "busy"}), 503, {"Retry-After": "30"}
+    try:
+        return transcribe_upload()
+    finally:
+        _in_flight.release()
 
+
+def transcribe_upload():
+    """The body of /transcribe once the request holds an in-flight slot."""
     file = request.files.get("file")
     if file is None:
         return jsonify({"error": "missing file"}), 400
@@ -164,6 +193,16 @@ def transcribe():
 
     with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
         file.save(tmp.name)
+        try:
+            duration = media_duration(tmp.name)
+        except av.error.FFmpegError:
+            # The PyAV message quotes the temporary path: not logged.
+            logger.warning("Refused an upload that is not readable media")
+            return jsonify({"error": "unreadable media"}), 400
+        if duration is None:
+            logger.info("The upload declares no duration; transcribing it within the upload limit")
+        elif duration > MAX_DURATION_SECONDS:
+            return jsonify({"error": f"media too long (max {MAX_DURATION_SECONDS} s)"}), 413
         segments, info = model.transcribe(tmp.name, language=language)
         text = " ".join(segment.text.strip() for segment in segments).strip()
 

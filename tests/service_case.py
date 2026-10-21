@@ -36,12 +36,48 @@ class FakeWhisperModel:
         self.calls = []
         type(self).instances.append(self)
 
+    # When set, transcribe() signals `transcribing`, then waits on `release` (a slow file) or raises `fails_with`.
+    transcribing = None
+    release = None
+    fails_with = None
+
     def transcribe(self, audio, language=None, **kwargs):
+        cls = type(self)
+        if cls.transcribing is not None:
+            cls.transcribing.set()
+        if cls.release is not None:
+            cls.release.wait(5)
+        if cls.fails_with is not None:
+            raise cls.fails_with
         with open(audio, "rb") as handle:
             content = handle.read()
         self.calls.append({"path": audio, "language": language, "content": content})
         segments = iter([types.SimpleNamespace(text=" Ciao "), types.SimpleNamespace(text="mondo. ")])
         return segments, types.SimpleNamespace(language=language or "it", duration=1.5)
+
+
+class FakeFFmpegError(ValueError):
+    """Stands for av.error.FFmpegError, whose message quotes the file path."""
+
+
+class FakeMedia:
+    """Stands for PyAV: av.open(path) gives a container whose duration is in microseconds."""
+
+    duration = 1_500_000
+    unreadable = False
+    opened = []
+
+    def __init__(self, path):
+        if type(self).unreadable:
+            raise FakeFFmpegError(f"Invalid data found when processing input: '{path}'")
+        type(self).opened.append(path)
+        self.duration = type(self).duration
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
 class FakeDownloads:
@@ -65,6 +101,12 @@ class ServiceTestCase(unittest.TestCase):
         FakeWhisperModel.instances = []
         FakeWhisperModel.block_on = None
         FakeWhisperModel.fail_with = None
+        FakeWhisperModel.transcribing = None
+        FakeWhisperModel.release = None
+        FakeWhisperModel.fails_with = None
+        FakeMedia.duration = 1_500_000
+        FakeMedia.unreadable = False
+        FakeMedia.opened = []
         self.downloads = FakeDownloads(Path("/cache/hub"))
 
         faster_whisper = types.ModuleType("faster_whisper")
@@ -72,7 +114,18 @@ class ServiceTestCase(unittest.TestCase):
         utils = types.ModuleType("faster_whisper.utils")
         utils.download_model = self.downloads
         faster_whisper.utils = utils
-        patcher = mock.patch.dict(sys.modules, {"faster_whisper": faster_whisper, "faster_whisper.utils": utils})
+        av = types.ModuleType("av")
+        av.open = FakeMedia
+        av.time_base = 1_000_000
+        av_error = types.ModuleType("av.error")
+        av_error.FFmpegError = FakeFFmpegError
+        av.error = av_error
+        patcher = mock.patch.dict(sys.modules, {
+            "faster_whisper": faster_whisper,
+            "faster_whisper.utils": utils,
+            "av": av,
+            "av.error": av_error,
+        })
         patcher.start()
         self.addCleanup(patcher.stop)
 
