@@ -6,74 +6,16 @@ what it answers, not about a real checkpoint, and they run without downloading o
     python -m unittest discover -s tests
 """
 
-import importlib.util
 import io
-import os
-import sys
-import types
 import unittest
 from pathlib import Path
-from unittest import mock
 
-from werkzeug.datastructures import FileStorage
-from werkzeug.test import encode_multipart
+from service_case import FakeWhisperModel, ServiceTestCase
 
-SERVICE = Path(__file__).resolve().parent.parent / "whisper-api.py"
 KEY = "s3cret-key"
 
 
-class FakeWhisperModel:
-    instances = []
-
-    def __init__(self, model_size_or_path, **kwargs):
-        self.name = model_size_or_path
-        self.options = kwargs
-        self.calls = []
-        type(self).instances.append(self)
-
-    def transcribe(self, audio, language=None, **kwargs):
-        with open(audio, "rb") as handle:
-            content = handle.read()
-        self.calls.append({"path": audio, "language": language, "content": content})
-        segments = iter([types.SimpleNamespace(text=" Ciao "), types.SimpleNamespace(text="mondo. ")])
-        return segments, types.SimpleNamespace(language=language or "it", duration=1.5)
-
-
-class WhisperApiTest(unittest.TestCase):
-    def setUp(self):
-        FakeWhisperModel.instances = []
-
-        faster_whisper = types.ModuleType("faster_whisper")
-        faster_whisper.WhisperModel = FakeWhisperModel
-        patcher = mock.patch.dict(sys.modules, {"faster_whisper": faster_whisper})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def service(self, **env):
-        """A fresh copy of the service, configured from the given environment only."""
-        environ = {key: value for key, value in os.environ.items() if not key.startswith("WHISPER_")}
-        environ.update(env)
-
-        spec = importlib.util.spec_from_file_location("whisper_api_under_test", SERVICE)
-        module = importlib.util.module_from_spec(spec)
-        with mock.patch.dict(os.environ, environ, clear=True):
-            spec.loader.exec_module(module)
-
-        return module.app.test_client()
-
-    def upload(self, client, content=b"audio bytes", filename="sample.mp3", headers=None, query=""):
-        # Encoded in memory: the test client would spool a large body to a file it never closes.
-        boundary, body = encode_multipart({"file": FileStorage(io.BytesIO(content), filename)})
-        return client.post(
-            "/transcribe" + query,
-            data=body,
-            content_type=f"multipart/form-data; boundary={boundary}",
-            headers=headers or {},
-        )
-
-    def model(self):
-        return FakeWhisperModel.instances[0]
-
+class WhisperApiTest(ServiceTestCase):
     def test_transcribes_the_upload_into_the_shape_the_laraplate_client_reads(self):
         client = self.service()
 
@@ -87,7 +29,8 @@ class WhisperApiTest(unittest.TestCase):
         self.service(WHISPER_MODEL="small", WHISPER_DEVICE="cuda", WHISPER_COMPUTE_TYPE="float16", WHISPER_NUM_WORKERS="2")
 
         self.assertEqual(len(FakeWhisperModel.instances), 1)
-        self.assertEqual(self.model().name, "small")
+        self.assertEqual(self.downloads.calls, [{"model": "small", "revision": None}])
+        self.assertEqual(self.model().name, "/cache/hub/models--Systran--faster-whisper-small/snapshots/abc123")
         self.assertEqual(self.model().options, {"device": "cuda", "compute_type": "float16", "num_workers": 2})
 
     def test_runs_one_transcription_at_a_time_by_default(self):
@@ -142,7 +85,7 @@ class WhisperApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.get_json(),
-            {"status": "healthy", "readiness": "experimental", "model": "small", "device": "cpu"},
+            {"status": "healthy", "readiness": "experimental", "model": "small", "model_revision": "abc123", "device": "cpu"},
         )
 
     def test_an_upload_larger_than_the_limit_answers_413_in_json(self):

@@ -51,10 +51,12 @@ created_on: 2026-10-20
 
 **Files:** modify `requirements.txt`, `whisper-api.py`, `tests/test_whisper_api.py`.
 
-- [ ] **Verify** in a scratch virtualenv with `faster-whisper==1.2.*`: the signatures of `WhisperModel.__init__`, `WhisperModel.transcribe` and `faster_whisper.utils.download_model`, and that `download_model("tiny")` returns a path ending in `snapshots/<commit>`. Record any difference in this plan before going on.
-- [ ] **Failing tests.** The fake `faster_whisper` gains `utils.download_model`, recording its arguments and returning `<tmp>/snapshots/abc123`. The service loads `WhisperModel` from that path; `WHISPER_MODEL_REVISION=abc` reaches `download_model` as `revision`; `/health` reports `model_revision: "abc123"`; a `WHISPER_MODEL` that is an existing directory skips `download_model` and reports `null`.
-- [ ] **Implement** P11; `requirements.txt`: `faster-whisper==1.2.*`.
-- [ ] **Run** the suite; commit `feat: move to faster-whisper 1.2 and report the model revision`.
+- [x] **Verify** in a scratch virtualenv with `faster-whisper==1.2.*`: the signatures of `WhisperModel.__init__`, `WhisperModel.transcribe` and `faster_whisper.utils.download_model`, and that `download_model("tiny")` returns a path ending in `snapshots/<commit>`. Record any difference in this plan before going on.
+- [x] **Failing tests.** The fake `faster_whisper` gains `utils.download_model`, recording its arguments and returning `<tmp>/snapshots/abc123`. The service loads `WhisperModel` from that path; `WHISPER_MODEL_REVISION=abc` reaches `download_model` as `revision`; `/health` reports `model_revision: "abc123"`; a `WHISPER_MODEL` that is an existing directory skips `download_model` and reports `null`.
+- [x] **Implement** P11; `requirements.txt`: `faster-whisper==1.2.*`.
+- [x] **Run** the suite; commit `feat: move to faster-whisper 1.2 and report the model revision`.
+
+> **Verified (2026-10-21):** faster-whisper 1.2.1 (ctranslate2 4.8.3, PyAV 19.0.2): `WhisperModel.__init__` keeps `device`, `compute_type`, `num_workers` (and adds `revision`); `transcribe` keeps `language`; `download_model(size_or_id, output_dir, local_files_only, cache_dir, revision, use_auth_token)` returns `.../snapshots/<commit>`. A real run under gunicorn with `tiny` and `HF_HUB_OFFLINE=1` reports the commit in `/health`.
 
 ### Task 2: Background loading and `/ready` (R2)
 

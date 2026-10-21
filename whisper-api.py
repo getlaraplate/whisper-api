@@ -2,8 +2,10 @@ import hmac
 import os
 import re
 import tempfile
+from pathlib import Path
 
 from faster_whisper import WhisperModel
+from faster_whisper.utils import download_model
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
@@ -19,6 +21,9 @@ def env_list(name):
 # /transcribe and reads back {"text", "language", "duration"}. The model is fixed
 # here: the client cannot name one, so there is nothing for it to download.
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base")
+# Empty: the latest revision on Hugging Face. Set only to pin a revision when a
+# model release breaks compatibility.
+MODEL_REVISION = os.environ.get("WHISPER_MODEL_REVISION") or None
 DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
 # Transcriptions that may run at the same time inside the model. With 1, requests
@@ -43,8 +48,24 @@ LANGUAGE_PATTERN = re.compile(r"^[a-z]{2,3}$")
 # The temporary file keeps the upload's extension only when it looks like one.
 SUFFIX_PATTERN = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
 
+def resolve_model():
+    """The path to load the model from and the revision commit it holds (None when unknown).
+
+    A local directory is used as it is. A size or repository id goes through the
+    Hugging Face cache, which keeps each revision under snapshots/<commit>/; with
+    HF_HUB_OFFLINE=1 it is read from the cache without contacting Hugging Face.
+    """
+    if os.path.isdir(MODEL_SIZE):
+        return MODEL_SIZE, None
+    path = download_model(MODEL_SIZE, revision=MODEL_REVISION)
+    parts = Path(path).parts
+    revision = parts[parts.index("snapshots") + 1] if "snapshots" in parts[:-1] else None
+    return path, revision
+
+
 # Loaded once at startup; cached on disk after the first download.
-model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE, num_workers=NUM_WORKERS)
+model_path, model_revision = resolve_model()
+model = WhisperModel(model_path, device=DEVICE, compute_type=COMPUTE_TYPE, num_workers=NUM_WORKERS)
 
 
 def authorized():
@@ -65,7 +86,13 @@ def request_too_large(error):
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "healthy", "readiness": READINESS, "model": MODEL_SIZE, "device": DEVICE})
+    return jsonify({
+        "status": "healthy",
+        "readiness": READINESS,
+        "model": MODEL_SIZE,
+        "model_revision": model_revision,
+        "device": DEVICE,
+    })
 
 
 @app.route("/transcribe", methods=["POST"])
