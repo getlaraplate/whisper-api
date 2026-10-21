@@ -62,9 +62,9 @@ created_on: 2026-10-20
 
 **Files:** modify `whisper-api.py`, `tests/test_whisper_api.py`.
 
-- [ ] **Failing tests.** `/health` answers while the model loads (a fake whose constructor blocks on an event); `/ready` `503` then `200`; `/transcribe` `503` with `Retry-After` while loading, `401` without a key when one is set; a model whose constructor raises makes the loader call the injected exit function with code 3.
-- [ ] **Implement** P1 to P3: loader thread started at import, readiness flag, `/ready`, gate after auth. A test helper waits for the loader so the existing tests keep a ready service.
-- [ ] **Run** the suite; commit `feat: load the model in the background and add /ready`.
+- [x] **Failing tests.** `/health` answers while the model loads (a fake whose constructor blocks on an event); `/ready` `503` then `200`; `/transcribe` `503` with `Retry-After` while loading, `401` without a key when one is set; a model whose constructor raises makes the loader call the injected exit function with code 3.
+- [x] **Implement** P1 to P3: loader thread started at import, readiness flag, `/ready`, gate after auth. A test helper waits for the loader so the existing tests keep a ready service.
+- [x] **Run** the suite; commit `feat: load the model in the background and add /ready`.
 
 ### Task 3: In-flight limit and maximum duration (R3)
 

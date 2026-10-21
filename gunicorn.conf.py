@@ -21,6 +21,9 @@ bind = f"{os.environ.get('WHISPER_HOST', '0.0.0.0')}:{os.environ.get('WHISPER_PO
 workers = 1
 worker_class = "gthread"
 threads = 4
+# The model loads in a thread started when the app is imported; a preloaded app
+# would start it in the master, and threads do not survive the fork.
+preload_app = False
 
 # The gthread worker keeps sending heartbeats while a long transcription runs in
 # a thread; this only bounds how long the worker may stay unresponsive.

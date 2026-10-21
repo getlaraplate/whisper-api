@@ -1,7 +1,9 @@
 import hmac
+import logging
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 
 from faster_whisper import WhisperModel
@@ -9,6 +11,12 @@ from faster_whisper.utils import download_model
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+logger = logging.getLogger("whisper_api")
+if not logger.handlers:
+    _log_handler = logging.StreamHandler()
+    _log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s"))
+    logger.addHandler(_log_handler)
+    logger.setLevel(logging.INFO)
 
 
 def env_list(name):
@@ -63,9 +71,40 @@ def resolve_model():
     return path, revision
 
 
-# Loaded once at startup; cached on disk after the first download.
-model_path, model_revision = resolve_model()
-model = WhisperModel(model_path, device=DEVICE, compute_type=COMPUTE_TYPE, num_workers=NUM_WORKERS)
+# gunicorn's exit code for a worker that failed to boot: gunicorn stops instead of
+# starting the worker again, and systemd or the container runtime restarts it.
+LOAD_FAILURE_EXIT_CODE = 3
+
+# Set once the model is loaded; until then model and model_revision are None.
+ready = threading.Event()
+model = None
+model_revision = None
+
+
+def load_model():
+    """Load the model once; cached on disk after the first download.
+
+    Runs in a background thread so the server answers /health at once and /ready
+    says when the model is there. A model that cannot be loaded ends the process
+    instead of leaving it to answer 503 forever.
+    """
+    global model, model_revision
+    try:
+        path, revision = resolve_model()
+        loaded = WhisperModel(path, device=DEVICE, compute_type=COMPUTE_TYPE, num_workers=NUM_WORKERS)
+    except Exception:  # noqa: BLE001
+        logger.exception("The model failed to load; stopping the process")
+        os._exit(LOAD_FAILURE_EXIT_CODE)
+        return
+    model, model_revision = loaded, revision
+    logger.info("Loaded model %s at revision %s", MODEL_SIZE, revision or "unknown")
+    ready.set()
+
+
+# Started at import, so in the gunicorn worker: the app must not be preloaded in
+# the master (gunicorn.conf.py), whose threads do not survive the fork.
+loader = threading.Thread(target=load_model, name="model-loader", daemon=True)
+loader.start()
 
 
 def authorized():
@@ -95,11 +134,21 @@ def health():
     })
 
 
+@app.route("/ready", methods=["GET"])
+def ready_check():
+    """Readiness: 200 once the model is loaded, 503 until then. Always open."""
+    if ready.is_set():
+        return jsonify({"status": "ready"})
+    return jsonify({"status": "loading"}), 503
+
+
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
     # Checked before the body is read, so an unauthorized upload is never parsed.
     if not authorized():
         return jsonify({"error": "unauthorized"}), 401, {"WWW-Authenticate": "Bearer"}
+    if not ready.is_set():
+        return jsonify({"error": "loading model"}), 503, {"Retry-After": "10"}
 
     file = request.files.get("file")
     if file is None:
