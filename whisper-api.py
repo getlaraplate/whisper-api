@@ -4,12 +4,14 @@ import os
 import re
 import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 import av
 from faster_whisper import WhisperModel
 from faster_whisper.utils import download_model
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
 logger = logging.getLogger("whisper_api")
@@ -59,6 +61,9 @@ MAX_DURATION_SECONDS = max(1, int(os.environ.get("WHISPER_MAX_DURATION_SECONDS",
 # /health, /ready and the refusals always find a thread (gunicorn.conf.py).
 MAX_IN_FLIGHT = max(1, int(os.environ.get("WHISPER_MAX_IN_FLIGHT", "4")))
 _in_flight = threading.BoundedSemaphore(MAX_IN_FLIGHT)
+
+# An incoming X-Request-Id is kept when it looks like an id; otherwise one is made.
+REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
 # An ISO 639 code such as "it" or "haw"; anything else would fail inside the model.
 LANGUAGE_PATTERN = re.compile(r"^[a-z]{2,3}$")
@@ -138,9 +143,37 @@ def media_duration(path):
         return container.duration / av.time_base
 
 
+def request_id():
+    """The id of the current request, made on first use."""
+    if "request_id" not in g:
+        incoming = request.headers.get("X-Request-Id", "")
+        g.request_id = incoming if REQUEST_ID_PATTERN.fullmatch(incoming) else uuid.uuid4().hex
+    return g.request_id
+
+
+@app.before_request
+def assign_request_id():
+    request_id()
+
+
+@app.after_request
+def add_request_id(response):
+    response.headers["X-Request-Id"] = request_id()
+    return response
+
+
 @app.errorhandler(413)
 def request_too_large(error):
     return jsonify({"error": f"file too large (max {MAX_UPLOAD_MB} MB)"}), 413
+
+
+@app.errorhandler(Exception)
+def internal_error(error):
+    """A generic answer for anything unexpected; the details go to the log only."""
+    if isinstance(error, HTTPException):
+        return error
+    logger.exception("Unhandled error on %s (request %s)", request.path, request_id())
+    return jsonify({"error": "internal error", "request_id": request_id()}), 500
 
 
 @app.route("/health", methods=["GET"])
@@ -197,7 +230,7 @@ def transcribe_upload():
             duration = media_duration(tmp.name)
         except av.error.FFmpegError:
             # The PyAV message quotes the temporary path: not logged.
-            logger.warning("Refused an upload that is not readable media")
+            logger.warning("Refused an upload that is not readable media (request %s)", request_id())
             return jsonify({"error": "unreadable media"}), 400
         if duration is None:
             logger.info("The upload declares no duration; transcribing it within the upload limit")

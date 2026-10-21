@@ -81,9 +81,9 @@ created_on: 2026-10-20
 
 **Files:** modify `whisper-api.py`, `gunicorn.conf.py`, `tests/test_whisper_api.py`.
 
-- [ ] **Failing tests.** Valid `X-Request-Id` echoed, invalid replaced, header on every answer including `401`, `413` and `503`. A fake transcribe raising `RuntimeError("secret")`: `500` `{"error": "internal error", "request_id": ...}` without `secret`; the log record holds the request id.
-- [ ] **Implement** P7 and P8; gunicorn `access_log_format` with `%({x-request-id}o)s`.
-- [ ] **Run** the suite; commit `feat: add request ids and stop leaking exceptions`.
+- [x] **Failing tests.** Valid `X-Request-Id` echoed, invalid replaced, header on every answer including `401`, `413` and `503`. A fake transcribe raising `RuntimeError("secret")`: `500` `{"error": "internal error", "request_id": ...}` without `secret`; the log record holds the request id.
+- [x] **Implement** P7 and P8; gunicorn `access_log_format` with `%({x-request-id}o)s`.
+- [x] **Run** the suite; commit `feat: add request ids and stop leaking exceptions`.
 
 ### Task 5: Version and OpenAPI document (R7)
 

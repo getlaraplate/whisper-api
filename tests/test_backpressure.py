@@ -47,7 +47,8 @@ class InFlightLimitTest(ServiceTestCase):
         client = self.service(WHISPER_MAX_IN_FLIGHT="1")
         FakeWhisperModel.fails_with = RuntimeError("decoder crashed")
 
-        self.assertEqual(self.upload(client).status_code, 500)
+        with self.assertLogs("whisper_api", "ERROR"):
+            self.assertEqual(self.upload(client).status_code, 500)
         FakeWhisperModel.fails_with = None
 
         self.assertEqual(self.upload(client).status_code, 200)
