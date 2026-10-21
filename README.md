@@ -16,26 +16,25 @@ reports the same status in `readiness`. The work that closes them, and what
 `production` requires, is in
 [the production readiness spec](docs/superpowers/specs/2026-10-20-production-readiness-design.md).
 
-**Tested on:** unit tests with a fake model (no model download), run by hand.
+**Tested on:** unit tests with a fake model (no model download), run by hand,
+and the release of 2026-10-21 under gunicorn with the real `tiny`, `base` and
+`small` models on a development machine (x86_64, CPU only), for the memory
+figures in [Memory](#memory), readiness, unreadable and too long media.
 Earlier releases ran on the Laraplate test container (Debian LXC, 4 GB RAM,
-2 vCPU, CPU only, model `base`); the hardened release (gunicorn, unprivileged
-user, upload limit) has not been verified there yet. **GPU:** not tested.
+2 vCPU, CPU only, model `base`); the current one has not been verified there
+yet. **GPU:** not tested.
 
 **Known gaps:**
 
 - The documented install shares one virtualenv (`/opt/ai-env`) with
   `sentence-transformers-api`: upgrading one service can break the other.
 - No container image, no tagged release, no changelog.
-- The model loads at startup with no separate readiness check: a process still
-  loading looks alive to a load balancer or a healthcheck.
 - Transcription is synchronous and runs one file at a time by default (see
   [Concurrency](#concurrency)): long media can exceed the client's timeout.
-- No backpressure and no maximum media duration: uploads wait without limit
-  when every thread is busy.
-- No metrics and no request id in the logs.
+- PyAV is held below 19: faster-whisper 1.2.1 does not work with it yet (see
+  `requirements.txt`).
+- No metrics.
 - No continuous integration: the tests run only by hand.
-- No machine-readable API description and no service version in `/health`.
-- `faster-whisper` is held at `1.0.*`, behind its latest release.
 - Plain HTTP: TLS needs your own reverse proxy (see [Security](#security)).
 
 **Default model:** Whisper `base`, converted for CTranslate2 as
@@ -45,19 +44,41 @@ model card.
 
 ## Endpoints
 
-- `GET /health` -> `{"status":"healthy","readiness":"experimental","model":"base","device":"cpu"}`. Always open.
+[`openapi.json`](openapi.json) describes every endpoint, request and answer
+(OpenAPI 3.1); the tests check that the service matches it. `api_version` in
+`/health` is the version of that contract, raised only by a change that breaks
+a client.
+
+- `GET /health` (liveness, always open) ->
+  `{"status":"healthy","readiness":"experimental","version":"0.1.0","api_version":1,"model":"base","model_revision":"<commit>","device":"cpu"}`
+- `GET /ready` (readiness, always open) -> `200` `{"status":"ready"}` once the
+  model is loaded, `503` `{"status":"loading"}` before. Point load balancers and
+  container healthchecks here.
 - `POST /transcribe` (multipart `file`, optional `language`, as `?language=it` or a
   form field; `Authorization: Bearer <WHISPER_API_KEY>` when a key is set) ->
   `{"text","language","duration"}`
+
+Every answer carries an `X-Request-Id` header: the one the client sent, when it
+matches `[A-Za-z0-9._-]{1,128}`, otherwise a new one. The access log prints it.
 
 ```bash
 curl -s -H "Authorization: Bearer $KEY" -F file=@sample.mp3 http://localhost:8001/transcribe
 ```
 
-Errors on `/transcribe`: `400` without a `file` or with a `language` that is not
-an ISO 639 code (`it`, `en`, `haw`), `401` without a valid key, `413` for a file
-over `WHISPER_MAX_UPLOAD_MB`. The Laraplate client treats any error as "no
-transcript" and indexes the media without one.
+Errors on `/transcribe`: `400` without a `file`, with a `language` that is not
+an ISO 639 code (`it`, `en`, `haw`) or with a file that is not readable media;
+`401` without a valid key; `413` for a file over `WHISPER_MAX_UPLOAD_MB` or media
+longer than `WHISPER_MAX_DURATION_SECONDS`; `503` with `Retry-After` while the
+model loads or when `WHISPER_MAX_IN_FLIGHT` uploads are already in flight;
+`500` `{"error": "internal error", "request_id": "..."}` for anything
+unexpected, with the details in the service log under that request id. The
+Laraplate client treats any error as "no transcript" and indexes the media
+without one.
+
+At startup the server answers at once and loads the model in the background. A
+model that cannot be downloaded or loaded ends the process with gunicorn's boot
+error (exit code 3) and the reason in the log; systemd restarts it after
+`RestartSec`.
 
 ## Security
 
@@ -68,9 +89,12 @@ transcript" and indexes the media without one.
   open: run it like that only on a trusted network.
 - **Model.** The model is fixed by `WHISPER_MODEL` on the host; a request cannot
   name one, so it cannot make the service download anything.
-- **Upload limit.** Files larger than `WHISPER_MAX_UPLOAD_MB` answer `413`. The
+- **Upload limits.** Files larger than `WHISPER_MAX_UPLOAD_MB` answer `413`. The
   upload is spooled to the temporary directory and copied once more for the
-  decoder, so keep about twice that size free in `/tmp`.
+  decoder, so keep about twice that size free in `/tmp`. Before transcribing,
+  the service reads the duration declared by the file with PyAV: longer than
+  `WHISPER_MAX_DURATION_SECONDS` answers `413`, a file PyAV cannot open answers
+  `400`. Neither the file name nor its path reaches the logs.
 - **Process.** The systemd unit runs gunicorn as the unprivileged `whisper-api`
   user.
 - **Transport.** The service speaks plain HTTP. Outside a private network, put
@@ -80,15 +104,18 @@ transcript" and indexes the media without one.
 ## Concurrency
 
 Transcription is synchronous: the request stays open until the text is ready,
-and there is no job queue. gunicorn runs **one worker process with 4 threads**
+and there is no job queue. gunicorn runs **one worker process with 8 threads**
 ([`gunicorn.conf.py`](gunicorn.conf.py)), because every process would load its
-own copy of the model:
+own copy of the model. Do not turn on `preload_app`: the model loads in a
+thread of the worker.
 
 - At most `WHISPER_NUM_WORKERS` transcriptions run at the same time (default 1);
   the other uploads wait in their thread.
-- `/health` keeps answering while a transcription runs.
-- Each waiting upload holds a thread, so the 4 threads also cap how many
-  requests can be in flight. Raise them with `GUNICORN_CMD_ARGS="--threads 8"`.
+- At most `WHISPER_MAX_IN_FLIGHT` uploads (default 4) are transcribed or wait;
+  the next answers `503` `{"error": "busy"}` with `Retry-After`, before its body
+  is read. Keep gunicorn's threads above that number
+  (`GUNICORN_CMD_ARGS="--threads 12"` for more).
+- `/health` and `/ready` keep answering while a transcription runs.
 - A waiting request counts against the client's timeout (`WHISPER_TIMEOUT` on the
   Laraplate side, default 120 s). On CPU, keep `WHISPER_NUM_WORKERS` at 1 and
   raise the client timeout for long media rather than running transcriptions in
@@ -129,6 +156,7 @@ printf 'WHISPER_API_KEY=%s\n' "$(openssl rand -hex 24)" > /opt/whisper-api/.env
 chmod 600 /opt/whisper-api/.env             # systemd reads it as root
 cp /opt/whisper-api/whisper.service /etc/systemd/system/whisper.service
 systemctl daemon-reload && systemctl enable --now whisper
+curl -s http://127.0.0.1:8001/ready         # {"status": "ready"} once the model is loaded
 ```
 
 The model is cached in `/var/cache/whisper-api` (`HF_HOME`), which systemd
@@ -148,6 +176,24 @@ The commented `PrivateTmp`, `ProtectSystem` and `ProtectHome` lines in the unit
 add sandboxing where mount namespaces are available (not in every unprivileged
 LXC container).
 
+## Model updates
+
+The model loads at its **latest revision** on Hugging Face. `/health` reports
+the revision in `model_revision` and the log records it at startup, so a change
+of behaviour can be traced to a model release. When a release breaks
+compatibility, pin the last good one with `WHISPER_MODEL_REVISION=<commit>`. To
+stop depending on Hugging Face at runtime, download the model ahead of time
+into the cache the service uses and set `HF_HUB_OFFLINE=1` in `.env`:
+
+```bash
+sudo -u whisper-api HF_HOME=/var/cache/whisper-api \
+  /opt/ai-env/bin/hf download Systran/faster-whisper-base
+```
+
+Python dependencies follow the same rule: the latest release that works. A
+known incompatibility is pinned in `requirements.txt` with the reason next to
+it, as PyAV is today.
+
 ## Running locally
 
 ```bash
@@ -162,12 +208,15 @@ gunicorn -c gunicorn.conf.py whisper-api:app   # production server
 | `WHISPER_MODEL` | `base` | `tiny`/`base`/`small`/`medium`/`large-v3`. Keep to `base`/`small` on a 4 GB CPU container. |
 | `WHISPER_DEVICE` | `cpu` | `cuda` for GPU. |
 | `WHISPER_COMPUTE_TYPE` | `int8` | GPU: `float16`. |
+| `WHISPER_MODEL_REVISION` | *(empty)* | Pins a model revision (commit); empty = the latest (see [Model updates](#model-updates)). |
 | `WHISPER_NUM_WORKERS` | `1` | Transcriptions that may run at the same time (see [Concurrency](#concurrency)). |
+| `WHISPER_MAX_IN_FLIGHT` | `4` | Uploads transcribed or waiting at once; the next answers `503` `busy`. |
+| `WHISPER_MAX_DURATION_SECONDS` | `10800` | Longest media accepted, from the duration the file declares; `413` beyond. |
 | `WHISPER_API_KEY` | *(empty)* | Bearer token; several comma-separated keys are accepted. Empty = open (trusted network only). Kept in `.env`, never committed. |
 | `WHISPER_MAX_UPLOAD_MB` | `512` | Largest accepted upload, in MB; `413` beyond. |
 | `WHISPER_HOST` | `0.0.0.0` | Listening address. |
 | `WHISPER_PORT` | `8001` | 8000 is the embedding service. |
-| `GUNICORN_CMD_ARGS` | *(empty)* | Overrides [`gunicorn.conf.py`](gunicorn.conf.py), e.g. `--threads 8`. |
+| `GUNICORN_CMD_ARGS` | *(empty)* | Overrides [`gunicorn.conf.py`](gunicorn.conf.py), e.g. `--threads 12`. |
 
 ## Tests
 
@@ -176,13 +225,15 @@ pip install flask
 python -m unittest discover -s tests
 ```
 
-The tests replace `faster-whisper` with a fake: they download no model and check
-what the service asks of the model and what it answers.
+The tests replace `faster-whisper` and PyAV with fakes: they download no model,
+decode no media, and check what the service asks of the model and what it
+answers.
 
 ## Wire into Laraplate
 
-`laraplate/.env`: `WHISPER_URL=http://<host>:8001`, `WHISPER_API_KEY=<key>`,
-`AI_MEDIA_TRANSCRIPTION_MODEL=whisper-local`.
+`laraplate/.env`: `WHISPER_URL=http://<host>:8001`, `WHISPER_API_KEY=<key>`. Media
+analysis and its transcription provider are then switched on in Filament >
+Settings; see the Laraplate guide `Modules/AI/docs/WHISPER_INSTALLATION.md`.
 
 ## License
 

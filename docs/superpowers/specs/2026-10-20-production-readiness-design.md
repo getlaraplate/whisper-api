@@ -1,8 +1,8 @@
 # whisper-api: production readiness
 
-**Status:** Draft, 2026-10-20. Phase 1 plan: `../plans/2026-10-20-phase-1-runtime-hardening.md` (open). Phase 0 delivered on 2026-10-20 (0b3c11a).
+**Status:** Draft, 2026-10-20. Phase 0 delivered on 2026-10-20 (0b3c11a); Phase 1 delivered on 2026-10-21 by `../plans/2026-10-20-phase-1-runtime-hardening.md`.
 **Builds on:** the hardening of 2026-10-20 (5f5738d).
-**Siblings:** the same work for [`sentence-transformers-api`](https://github.com/getlaraplate/sentence-transformers-api/blob/main/docs/superpowers/specs/2026-10-20-production-readiness-design.md), and the Laraplate client side in [`laraplate`](https://github.com/getlaraplate/laraplate/blob/master/docs/superpowers/specs/2026-10-20-self-hosted-ai-services-client-design.md). The three specs share the decision and requirement numbers (D, R, E), so a number means the same thing in each.
+**Siblings:** the same work for [`sentence-transformers-api`](https://github.com/getlaraplate/sentence-transformers-api/blob/master/docs/superpowers/specs/2026-10-20-production-readiness-design.md), and the Laraplate client side in [`laraplate`](https://github.com/getlaraplate/laraplate/blob/master/docs/superpowers/specs/2026-10-20-self-hosted-ai-services-client-design.md). The three specs share the decision and requirement numbers (D, R, E), so a number means the same thing in each.
 **History:** split on 2026-10-20 from one spec at the root of the Laraplate workspace, so that each repository owns the design of its own work.
 
 ## 1. Goal
@@ -76,7 +76,7 @@ Rules:
 - `GET /health` answers as soon as the process runs (liveness).
 - `GET /ready` answers `503` until the model is loaded, then `200`. The container healthcheck and the docs use `/ready`.
 - `/transcribe` answers `503` with `Retry-After` while the service is not ready.
-- A model that fails to load makes `/ready` report the error and the process exit with a non-zero code, so systemd or the container runtime restarts it.
+- A model that fails to load makes the process exit with a non-zero code, so systemd or the container runtime restarts it. *Amended 2026-10-21:* `/ready` does not report the error, since a process that is exiting cannot answer; the reason is in the log (exit code 3, gunicorn's boot error).
 
 ### R3. Backpressure and resource limits
 
@@ -124,7 +124,7 @@ another `WHISPER_MODEL` brings the licence on its own model card.
 - No revision pinned by default: the model loads at its latest release.
 - At load, the service logs the resolved revision and `/health` or a `/models` endpoint reports it, so a regression can be traced to a model release.
 - When a model release breaks compatibility: an env var pins the revision (`WhisperModel` in faster-whisper 1.2.1 accepts a `revision` argument), and the docs describe provisioning the weights ahead of time and running with `HF_HUB_OFFLINE=1`. This is the fallback in D4, not the default.
-- `faster-whisper` moves from `1.0.*` to the latest release under the same rule.
+- `faster-whisper` moves from `1.0.*` to the latest release under the same rule. *Delivered 2026-10-21:* 1.2.1, with PyAV pinned below 19, which faster-whisper 1.2.1 does not support yet (SYSTRAN/faster-whisper#1589, fixed on its master): the first application of the D4 fallback.
 
 ## 6. Evolutions
 
@@ -165,7 +165,7 @@ They do not gate `production`.
 | Phase | Content |
 |---|---|
 | 0 | Readiness section `experimental`, model licence, `readiness` in `/health`. **Delivered 2026-10-20** (0b3c11a) |
-| 1 | R2, R3, R4, R7, R10 |
+| 1 | R2, R3, R4, R7, R10. **Delivered 2026-10-21** (`../plans/2026-10-20-phase-1-runtime-hardening.md`) |
 | 2 | R6, R1, R8, R5 |
 | 3 | Status `production` when section 5 is complete |
 | 4 | E1 |

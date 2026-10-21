@@ -1,12 +1,12 @@
 ---
-status: open
+status: closed
 created_on: 2026-10-20
 ---
 # Phase 1 runtime hardening. Implementation Plan
 
 > **For agentic workers:** execute task by task. Steps use checkbox (`- [ ]`) syntax; tick each step when it is done, in the same work block. A step deliberately not done is `- [-]` with its reason on the same line.
 
-**Status:** Open.
+**Status:** Closed (2026-10-21): delivered on `master`, see "Delivery status" at the end.
 
 **Goal:** the service runs on the latest faster-whisper, starts answering at once and says when it is ready, refuses uploads it cannot take and media longer than allowed, never leaks an exception, carries a request id, declares its version and HTTP contract, and reports the revision of its model, with a way to pin it.
 
@@ -97,6 +97,38 @@ created_on: 2026-10-20
 
 **Files:** modify `README.md`, `../specs/2026-10-20-production-readiness-design.md`, this plan.
 
-- [ ] **Docs.** README: `/ready` and the healthcheck; `WHISPER_MAX_IN_FLIGHT`, `WHISPER_MAX_DURATION_SECONDS`, the `503` and `413` answers; `X-Request-Id`; `version`, `api_version`, `openapi.json`; `WHISPER_MODEL_REVISION`, provisioning ahead and `HF_HUB_OFFLINE=1`; the memory figures and `MemoryMax`; the Concurrency section with the in-flight limit. Production readiness section: the gaps closed by this plan leave the list; the status stays `experimental`.
-- [ ] **Spec.** Status line points to this plan and records Phase 1 delivered; amend R2 with P1.
-- [ ] **Close.** Delivery status with divergences, ticks, `status: closed`; commit `docs: close the phase 1 plan`.
+- [x] **Docs.** README: `/ready` and the healthcheck; `WHISPER_MAX_IN_FLIGHT`, `WHISPER_MAX_DURATION_SECONDS`, the `503` and `413` answers; `X-Request-Id`; `version`, `api_version`, `openapi.json`; `WHISPER_MODEL_REVISION`, provisioning ahead and `HF_HUB_OFFLINE=1`; the memory figures and `MemoryMax`; the Concurrency section with the in-flight limit. Production readiness section: the gaps closed by this plan leave the list; the status stays `experimental`.
+- [x] **Spec.** Status line points to this plan and records Phase 1 delivered; amend R2 with P1.
+- [x] **Close.** Delivery status with divergences, ticks, `status: closed`; commit `docs: close the phase 1 plan`.
+
+## Delivery status (2026-10-21): shipped
+
+All six tasks are built on `master` (the repository's default branch was renamed from `main` meanwhile),
+commits `42dc03a` to the closing commit. The service runs on faster-whisper 1.2.1, resolves the model through
+`download_model` and reports its revision in `/health` (`WHISPER_MODEL_REVISION` pins one); loads it in a
+background thread (`/ready`, `503` with `Retry-After` on `/transcribe` while loading, exit code 3 when it fails
+to load); refuses uploads beyond `WHISPER_MAX_IN_FLIGHT` with `503 busy` before reading them; reads the
+declared duration with PyAV and answers `413` beyond `WHISPER_MAX_DURATION_SECONDS` and `400` for unreadable
+media; carries `X-Request-Id`; answers unexpected errors with a generic `500`; declares `version` and
+`api_version` with an `openapi.json` checked by the tests. 47 unit tests pass; real runs under gunicorn with
+`tiny`, `base` and `small` confirmed the revision offline, the `400` and `413` paths and the memory figures.
+
+Divergences from the plan text:
+
+- **PyAV pinned below 19 (Task 3).** The real run found that faster-whisper 1.2.1 passes `metadata_errors`
+  to `av.open()`, which PyAV 19 removed: every transcription failed. The fix is on faster-whisper master
+  (SYSTRAN/faster-whisper#1589) but not released, so `requirements.txt` pins `av<19` with the reason, as D4
+  prescribes. The Task 1 verification had only checked signatures, not a transcription.
+- **P1 against the spec (Task 2).** As planned, `/ready` does not report a load error: the process exits.
+  R2 of the spec is amended accordingly.
+- **`MemoryMax=1G` (Task 3)** fits `base` (peak 0.56 GB); the README and the unit say to raise it to `2G` for
+  `small` (peak 1.36 GB). Figures from a synthetic sample, stated as an order of magnitude.
+- **Request id test (Task 4).** The "invalid id" case uses a tab instead of a newline, which the test client
+  refuses in a header value.
+- **`contract.py`** is a copy of the one in `sentence-transformers-api`; its docstring says to keep the two in
+  step.
+- **README "Wire into Laraplate"** no longer names `AI_MEDIA_TRANSCRIPTION_MODEL`, which Laraplate does not
+  read any more; it points to the Laraplate guide.
+
+**Documented in:** `README.md` (Production readiness, Endpoints, Security, Concurrency, Memory, Model updates,
+Install, Config) and `openapi.json`.
