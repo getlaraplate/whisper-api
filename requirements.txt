@@ -1,3 +1,7 @@
 faster-whisper==1.2.*
+# faster-whisper 1.2.1 passes metadata_errors to av.open(), which PyAV 19 removed
+# (fixed on faster-whisper master, SYSTRAN/faster-whisper#1589, not released yet).
+# Drop this line once a faster-whisper release supports PyAV 19.
+av<19
 flask==3.1.*
 gunicorn==26.2.*

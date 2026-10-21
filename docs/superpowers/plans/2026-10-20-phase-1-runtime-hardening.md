@@ -72,8 +72,10 @@ created_on: 2026-10-20
 
 - [x] **Failing tests.** With `WHISPER_MAX_IN_FLIGHT=1` and a fake transcribe blocked on an event, a second upload answers `503` `{"error": "busy"}` with `Retry-After`, and its body is not parsed (the fake model sees one call); the slot comes back after a `500`. With a fake `av` reporting a duration over `WHISPER_MAX_DURATION_SECONDS`: `413`, the model not called, the temporary file gone. A fake `av.open` raising the fake `FFmpegError` with the path in its message: `400` `{"error": "unreadable media"}`, the path absent from the answer and from the log. A container without duration: transcribed.
 - [x] **Implement** P4 to P6. `gunicorn.conf.py`: `threads = 8`, `worker_connections = 32`.
-- [ ] **Measure memory.** In a scratch virtualenv, transcribe a short sample with `base` and `small` on CPU and read the resident memory; write the figures in the README and set `MemoryMax` in `whisper.service` at about 1.5 times the `base` figure, with a comment on how to raise it for a larger model.
-- [ ] **Run** the suite; commit `feat: bound uploads in flight and media duration`.
+- [x] **Measure memory.** In a scratch virtualenv, transcribe a short sample with `base` and `small` on CPU and read the resident memory; write the figures in the README and set `MemoryMax` in `whisper.service` at about 1.5 times the `base` figure, with a comment on how to raise it for a larger model.
+- [x] **Run** the suite; commit `feat: bound uploads in flight and media duration`.
+
+> **Finding (2026-10-21):** the real run found that faster-whisper 1.2.1 passes `metadata_errors` to `av.open()`, which PyAV 19 (released 2026-09-29) no longer accepts: every transcription failed with `500`. Fixed on faster-whisper master (SYSTRAN/faster-whisper#1589), not released; `requirements.txt` pins `av<19` (18.1.0) until it is, as D4 prescribes. With it: unreadable file `400`, over the duration `413`, a 120 s sample transcribed; peak 0.56 GB with `base`, 1.36 GB with `small`. `MemoryMax=1G`.
 
 ### Task 4: Request id and generic errors (R4)
 

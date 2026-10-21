@@ -96,6 +96,25 @@ own copy of the model:
   `WHISPER_NUM_WORKERS=2` lets two transcriptions run in parallel (memory grows
   accordingly).
 
+## Memory
+
+Resident memory of the gunicorn worker, measured on 2026-10-21 (x86_64 CPU,
+Python 3.14, faster-whisper 1.2.1, `int8`, one transcription at a time) with a
+120-second synthetic sample (a tone over noise; real speech decodes differently,
+so treat the figures as an order of magnitude):
+
+| `WHISPER_MODEL` | Idle | Peak | Time for the sample |
+| --------------- | ---- | ---- | ------------------- |
+| `tiny` | 0.19 GB | 0.26 GB | |
+| `base` | 0.24 GB | 0.56 GB | 15 s |
+| `small` | 0.60 GB | 1.36 GB | 165 s |
+
+The systemd unit caps the service at `MemoryMax=1G`, enough for `base`. Raise it
+to `2G` for `small`, and further for `medium`, `large-v3` or
+`WHISPER_NUM_WORKERS` above 1. Uploads waiting for the model are spooled to
+disk and add little memory. On a host shared with `sentence-transformers-api`,
+keep the sum of both peaks below the host's memory.
+
 ## Install (Debian LXC, no Docker)
 
 Create the dedicated user once (no home, no login shell), then install the code

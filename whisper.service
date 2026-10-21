@@ -22,6 +22,11 @@ ExecStart=/opt/ai-env/bin/gunicorn -c /opt/whisper-api/gunicorn.conf.py whisper-
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes
+# Peak about 0.6 GB with WHISPER_MODEL=base and one transcription at a time
+# (README, "Memory"). small peaks at about 1.4 GB: raise this to 2G for it, more
+# for medium or large-v3 or WHISPER_NUM_WORKERS above 1. Past the limit the
+# kernel stops the service and systemd restarts it.
+MemoryMax=1G
 # Extra sandboxing; needs mount namespaces, which an unprivileged LXC container
 # may not allow (the unit then fails with status 226/NAMESPACE).
 #PrivateTmp=yes
